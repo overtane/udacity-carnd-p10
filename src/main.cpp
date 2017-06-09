@@ -44,8 +44,7 @@ double polyeval(Eigen::VectorXd coeffs, double x) {
 // Fit a polynomial.
 // Adapted from
 // https://github.com/JuliaMath/Polynomials.jl/blob/master/src/Polynomials.jl#L676-L716
-Eigen::VectorXd polyfit(Eigen::VectorXd xvals, Eigen::VectorXd yvals,
-                        int order) {
+Eigen::VectorXd polyfit(Eigen::VectorXd xvals, Eigen::VectorXd yvals, int order) {
   assert(xvals.size() == yvals.size());
   assert(order >= 1 && order <= xvals.size() - 1);
   Eigen::MatrixXd A(xvals.size(), order + 1);
@@ -85,29 +84,39 @@ int main() {
         string event = j[0].get<string>();
         if (event == "telemetry") {
           // j[1] is the data JSON object
-          vector<double> ptsx = j[1]["ptsx"];
-          vector<double> ptsy = j[1]["ptsy"];
-          double px = j[1]["x"];
-          double py = j[1]["y"];
-          double psi = j[1]["psi"];
-          double v = j[1]["speed"];
+          vector<double> ptsx = j[1]["ptsx"];  // waypoints x, map coordinate
+          vector<double> ptsy = j[1]["ptsy"];  // waypoints y, map coordinate
+          double px = j[1]["x"];               // car position x, map coordinate
+          double py = j[1]["y"];               // car position y, map coordinate
+          double psi = j[1]["psi"];            // car orientation (angle with map's x-axis), radians
+          double v = j[1]["speed"];            // speed mph
 
-          Eigen::VectorXd xvals = Eigen::VectorXd::Map(ptsx.data(), ptsx.size());
-          Eigen::VectorXd yvals = Eigen::VectorXd::Map(ptsy.data(), ptsy.size());
+          // change map waypoints to car coordinates
+          Eigen::VectorXd xvals(ptsx.size());
+          Eigen::VectorXd yvals(ptsy.size());
 
-          Eigen::VectorXd coeffs = polyfit(xvals, yvals, 1);
-          // calculate the cross track error
-          double cte = polyeval(coeffs, px) - py;
-          // calculate the orientation error
-          double epsi = psi - atan(coeffs[1]);
+          for (int i=0; i< ptsx.size(); i++) {
+            xvals(i) =  (ptsx[i] - px) * cos(-psi) - (ptsy[i] - py) * sin(-psi);
+            yvals(i) = -(ptsx[i] - px) * sin(-psi) - (ptsy[i] - py) * cos(-psi);
+          }
+          Eigen::VectorXd coeffs = polyfit(xvals, yvals, 3);
+         
+          // calculate the cross track error in car coordinates (x=0)
+          double cte = polyeval(coeffs, 0);
+          // calculate the orientation error in car coordinates (psi=0)
+          double epsi = -atan(coeffs[1]);
+
+          std::cout << "CTE: " << cte << " EPSI: " << epsi << std::endl; 
 
           // Calculate steeering angle and throttle using MPC.
           Eigen::VectorXd state(6);
-          state  <<  px, py, psi, v, cte, epsi;
-          vector<double> ctrl = mpc.Solve(state, coeffs);
+          state  <<  0, 0, 0, v, cte, epsi;
+          vector<double> actuators = mpc.Solve(state, coeffs);
 
-          double steer_value = ctrl[0];
-          double throttle_value = ctrl[1];
+          double steer_value    = actuators[0] / deg2rad(25);
+          double throttle_value = actuators[1];
+
+          std::cout << "Steer: " << steer_value << " Throttle: " << throttle_value << std::endl; 
 
           json msgJson;
           // NOTE: Remember to divide by deg2rad(25) before you send the steering value back.
@@ -145,9 +154,9 @@ int main() {
           // Feel free to play around with this value but should be to drive
           // around the track with 100ms latency.
           //
-          // NOTE: REMEMBER TO SET THIS TO 100 MILLISECONDS BEFORE
+          // TODO NOTE: REMEMBER TO SET THIS TO 100 MILLISECONDS BEFORE
           // SUBMITTING.
-          this_thread::sleep_for(chrono::milliseconds(100));
+          // this_thread::sleep_for(chrono::milliseconds(100));
           ws.send(msg.data(), msg.length(), uWS::OpCode::TEXT);
         }
       } else {
@@ -191,3 +200,4 @@ int main() {
   }
   h.run();
 }
+
