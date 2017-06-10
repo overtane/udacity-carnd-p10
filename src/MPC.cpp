@@ -32,7 +32,7 @@ const double Lf = 2.67;
 
 // Both the reference cross track and orientation errors are 0.
 // // The reference velocity is set to 40 mph.
-double ref_v = 40;
+double ref_v = 100;
 
 class FG_eval {
  public:
@@ -51,21 +51,22 @@ class FG_eval {
 
     // The part of the cost based on the reference state.
     for (int t = 0; t < N; t++) {
-      fg[0] += CppAD::pow(vars[cte_start + t], 2);
-      fg[0] += CppAD::pow(vars[epsi_start + t], 2);
-      fg[0] += CppAD::pow(vars[v_start + t] - ref_v, 2);
+      fg[0] += 1   * CppAD::pow(vars[cte_start + t], 2);
+      fg[0] += 1   * CppAD::pow(vars[epsi_start + t], 2);
+      fg[0] += 0.1 * CppAD::pow(vars[v_start + t] - ref_v, 2);
     }
 
-    // Minimize the use of actuators.
+    // Cost terms controlling magnitude of the actuators
     for (int t = 0; t < N - 1; t++) {
       fg[0] += 500 * CppAD::pow(vars[delta_start + t], 2);
-      fg[0] += 20  * CppAD::pow(vars[a_start + t], 2);
+      fg[0] += 3   * CppAD::pow(vars[a_start + t], 2); // NOTE: multiplier here cuts down the max speed
     }
 
+    // These control the magnitude of the change of the actuators
     // Minimize the value gap between sequential actuations.
     for (int t = 0; t < N - 2; t++) {
-      fg[0] += CppAD::pow(vars[delta_start + t + 1] - vars[delta_start + t], 2);
-      fg[0] += CppAD::pow(vars[a_start + t + 1] - vars[a_start + t], 2);
+      fg[0] += 50000 * CppAD::pow(vars[delta_start + t + 1] - vars[delta_start + t], 2);
+      fg[0] += 10000 * CppAD::pow(vars[a_start + t + 1] - vars[a_start + t], 2);
     }
 
     //
@@ -259,9 +260,10 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs) {
   vector<double> result;
 
   result.push_back(solution.obj_value);        // cost
-  result.push_back(solution.x[delta_start+2]); // predicted steering angle 
-  result.push_back(solution.x[a_start+2]);     // predicted throttle value
+  result.push_back(solution.x[delta_start]); // predicted steering angle 
+  result.push_back(solution.x[a_start]);     // predicted throttle value
 
+  // return predicted path for trajectory output
   for (int i=2; i < N; i++) {
       result.push_back(solution.x[x_start+i]);
       result.push_back(solution.x[y_start+i]);

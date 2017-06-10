@@ -90,6 +90,7 @@ int main() {
           double py = j[1]["y"];               // car position y, map coordinate
           double psi = j[1]["psi"];            // car orientation (angle with map's x-axis), radians
           double v = j[1]["speed"];            // speed mph
+          double steer_angle = j[1]["steering_angle"];
 
           // change map waypoints to car coordinates
           Eigen::VectorXd xvals(ptsx.size());
@@ -103,14 +104,20 @@ int main() {
           // fit the waypoints to a polynomial. expect curvy road -> three degrees 
           Eigen::VectorXd coeffs = polyfit(xvals, yvals, 3);
          
+          // predict the state after expected latency 100 ms
+          double latency = 0.1; // 100 ms
+          double x_pred = v * latency;
+          double y_pred = 0.0;
+          double psi_pred = -v * steer_angle * deg2rad(25) * latency / 2.67;
+
           // calculate the cross track error in car coordinates (x=0)
           double cte = polyeval(coeffs, 0);
           // calculate the orientation error in car coordinates (psi=0)
-          double epsi = 0 - atan(coeffs[1]);
+          double epsi = atan(coeffs[1] + 2*coeffs[2]*x_pred);
 
           // Calculate steeering angle and throttle using MPC.
           Eigen::VectorXd state(6);
-          state  <<  0, 0, 0, v, cte, epsi;
+          state  <<  x_pred, y_pred, psi_pred, v, cte, epsi;
           vector<double> actuators = mpc.Solve(state, coeffs);
 
           double cost           = actuators[0];
@@ -121,7 +128,7 @@ int main() {
           std::cout << std::fixed << std::setprecision(4) 
               << std::setw(10) << cte
               << std::setw(10) << epsi
-              << std::setw(10) << cost
+              << std::setw(16) << cost
               << std::setw(10) << steer_value
               << std::setw(10) << throttle_value 
               << std::endl; 
