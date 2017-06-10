@@ -6,7 +6,7 @@
 using CppAD::AD;
 
 // Set the timestep length and duration
-size_t N = 25;
+size_t N = 20;
 double dt = 0.05;
 
 const int x_start     = 0 * N;
@@ -32,7 +32,7 @@ const double Lf = 2.67;
 
 // Both the reference cross track and orientation errors are 0.
 // // The reference velocity is set to 40 mph.
-double ref_v = 70;
+double ref_v = 40;
 
 class FG_eval {
  public:
@@ -59,7 +59,7 @@ class FG_eval {
     // Minimize the use of actuators.
     for (int t = 0; t < N - 1; t++) {
       fg[0] += 500 * CppAD::pow(vars[delta_start + t], 2);
-      fg[0] += CppAD::pow(vars[a_start + t], 2);
+      fg[0] += 20  * CppAD::pow(vars[a_start + t], 2);
     }
 
     // Minimize the value gap between sequential actuations.
@@ -250,14 +250,23 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs) {
   ok &= solution.status == CppAD::ipopt::solve_result<Dvector>::success;
 
   // Cost
-  auto cost = solution.obj_value;
-  std::cout << "Cost " << cost << std::endl;
+  double cost = solution.obj_value;
+  //std::cout << "Cost " << cost << std::endl;
 
   // Return the first actuator values. The variables can be accessed with
   // `solution.x[i]`.
-  return {solution.x[delta_start], solution.x[a_start]};
-  //return {solution.x[x_start + 1],   solution.x[y_start + 1],
-  //        solution.x[psi_start + 1], solution.x[v_start + 1],
-  //        solution.x[cte_start + 1], solution.x[epsi_start + 1],
-  //        solution.x[delta_start],   solution.x[a_start]};
+
+  vector<double> result;
+
+  result.push_back(solution.obj_value);        // cost
+  result.push_back(solution.x[delta_start+2]); // predicted steering angle 
+  result.push_back(solution.x[a_start+2]);     // predicted throttle value
+
+  for (int i=2; i < N; i++) {
+      result.push_back(solution.x[x_start+i]);
+      result.push_back(solution.x[y_start+i]);
+  }
+
+  return result;
+
 }

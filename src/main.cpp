@@ -76,7 +76,7 @@ int main() {
     // The 4 signifies a websocket message
     // The 2 signifies a websocket event
     string sdata = string(data).substr(0, length);
-    cout << sdata << endl;
+    //cout << sdata << endl;
     if (sdata.size() > 2 && sdata[0] == '4' && sdata[1] == '2') {
       string s = hasData(sdata);
       if (s != "") {
@@ -97,36 +97,47 @@ int main() {
 
           for (int i=0; i< ptsx.size(); i++) {
             xvals(i) =  (ptsx[i] - px) * cos(-psi) - (ptsy[i] - py) * sin(-psi);
-            yvals(i) = -(ptsx[i] - px) * sin(-psi) - (ptsy[i] - py) * cos(-psi);
+            yvals(i) =  (ptsx[i] - px) * sin(-psi) + (ptsy[i] - py) * cos(-psi);
           }
+
+          // fit the waypoints to a polynomial. expect curvy road -> three degrees 
           Eigen::VectorXd coeffs = polyfit(xvals, yvals, 3);
          
           // calculate the cross track error in car coordinates (x=0)
           double cte = polyeval(coeffs, 0);
           // calculate the orientation error in car coordinates (psi=0)
-          double epsi = -atan(coeffs[1]);
-
-          std::cout << "CTE: " << cte << " EPSI: " << epsi << std::endl; 
+          double epsi = 0 - atan(coeffs[1]);
 
           // Calculate steeering angle and throttle using MPC.
           Eigen::VectorXd state(6);
           state  <<  0, 0, 0, v, cte, epsi;
           vector<double> actuators = mpc.Solve(state, coeffs);
 
-          double steer_value    = actuators[0] / deg2rad(25);
-          double throttle_value = actuators[1];
+          double cost           = actuators[0];
+          // normalize steer value to [-1,1]. divide by deg2rad(25), which is max by controller
+          double steer_value    = -actuators[1] / deg2rad(25);
+          double throttle_value = actuators[2];
 
-          std::cout << "Steer: " << steer_value << " Throttle: " << throttle_value << std::endl; 
+          std::cout << std::fixed << std::setprecision(4) 
+              << std::setw(10) << cte
+              << std::setw(10) << epsi
+              << std::setw(10) << cost
+              << std::setw(10) << steer_value
+              << std::setw(10) << throttle_value 
+              << std::endl; 
 
           json msgJson;
-          // NOTE: Remember to divide by deg2rad(25) before you send the steering value back.
-          // Otherwise the values will be in between [-deg2rad(25), deg2rad(25] instead of [-1, 1].
           msgJson["steering_angle"] = steer_value;
           msgJson["throttle"] = throttle_value;
 
           //Display the MPC predicted trajectory 
           vector<double> mpc_x_vals;
           vector<double> mpc_y_vals;
+
+          for (int i=3; i < actuators.size(); i += 2) {
+              mpc_x_vals.push_back(actuators[i]);
+              mpc_y_vals.push_back(actuators[i+1]);
+          }
 
           //.. add (x,y) points to list here, points are in reference to the vehicle's coordinate system
           // the points in the simulator are connected by a Green line
@@ -138,6 +149,10 @@ int main() {
           vector<double> next_x_vals;
           vector<double> next_y_vals;
 
+          for (int i=0; i < xvals.size(); i++) {
+              next_x_vals.push_back(xvals(i));
+              next_y_vals.push_back(yvals(i));
+          }
           //.. add (x,y) points to list here, points are in reference to the vehicle's coordinate system
           // the points in the simulator are connected by a Yellow line
 
@@ -146,7 +161,7 @@ int main() {
 
 
           auto msg = "42[\"steer\"," + msgJson.dump() + "]";
-          std::cout << msg << std::endl;
+          //std::cout << msg << std::endl;
           // Latency
           // The purpose is to mimic real driving conditions where
           // the car does actuate the commands instantly.
@@ -156,7 +171,7 @@ int main() {
           //
           // TODO NOTE: REMEMBER TO SET THIS TO 100 MILLISECONDS BEFORE
           // SUBMITTING.
-          // this_thread::sleep_for(chrono::milliseconds(100));
+          this_thread::sleep_for(chrono::milliseconds(100));
           ws.send(msg.data(), msg.length(), uWS::OpCode::TEXT);
         }
       } else {
