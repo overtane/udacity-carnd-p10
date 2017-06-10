@@ -69,8 +69,9 @@ int main() {
 
   // MPC is initialized here!
   MPC mpc;
+  bool title = false;
 
-  h.onMessage([&mpc](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
+  h.onMessage([&mpc,&title](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
                      uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
     // The 4 signifies a websocket message
@@ -110,14 +111,14 @@ int main() {
           double y_pred = 0.0;
           double psi_pred = -v * steer_angle * deg2rad(25) * latency / 2.67;
 
-          // calculate the cross track error in car coordinates (x=0)
-          double cte = polyeval(coeffs, 0);
-          // calculate the orientation error in car coordinates (psi=0)
-          double epsi = atan(coeffs[1] + 2*coeffs[2]*x_pred);
+          // calculate the cross track error in car coordinates
+          double cte_pred = polyeval(coeffs, x_pred);
+          // calculate the orientation error in car coordinates
+          double epsi_pred = atan(coeffs[1] + 2*coeffs[2]*x_pred);
 
           // Calculate steeering angle and throttle using MPC.
           Eigen::VectorXd state(6);
-          state  <<  x_pred, y_pred, psi_pred, v, cte, epsi;
+          state  <<  x_pred, y_pred, psi_pred, v, cte_pred, epsi_pred;
           vector<double> actuators = mpc.Solve(state, coeffs);
 
           double cost           = actuators[0];
@@ -125,9 +126,20 @@ int main() {
           double steer_value    = -actuators[1] / deg2rad(25);
           double throttle_value = actuators[2];
 
+          if (!title) {
+            std::cout 
+                << std::setw(10) << "CTE"
+                << std::setw(10) << "ePSI"
+                << std::setw(16) << "Cost"
+                << std::setw(10) << "Steer"
+                << std::setw(10) << "Throttle"
+                << std::endl; 
+            title = true;
+          }
+
           std::cout << std::fixed << std::setprecision(4) 
-              << std::setw(10) << cte
-              << std::setw(10) << epsi
+              << std::setw(10) << cte_pred
+              << std::setw(10) << epsi_pred
               << std::setw(16) << cost
               << std::setw(10) << steer_value
               << std::setw(10) << throttle_value 
@@ -137,7 +149,7 @@ int main() {
           msgJson["steering_angle"] = steer_value;
           msgJson["throttle"] = throttle_value;
 
-          //Display the MPC predicted trajectory 
+          // Display the MPC predicted trajectory 
           vector<double> mpc_x_vals;
           vector<double> mpc_y_vals;
 
@@ -146,13 +158,10 @@ int main() {
               mpc_y_vals.push_back(actuators[i+1]);
           }
 
-          //.. add (x,y) points to list here, points are in reference to the vehicle's coordinate system
-          // the points in the simulator are connected by a Green line
-
           msgJson["mpc_x"] = mpc_x_vals;
           msgJson["mpc_y"] = mpc_y_vals;
 
-          //Display the waypoints/reference line
+          // Display the waypoints/reference line
           vector<double> next_x_vals;
           vector<double> next_y_vals;
 
@@ -160,8 +169,6 @@ int main() {
               next_x_vals.push_back(xvals(i));
               next_y_vals.push_back(yvals(i));
           }
-          //.. add (x,y) points to list here, points are in reference to the vehicle's coordinate system
-          // the points in the simulator are connected by a Yellow line
 
           msgJson["next_x"] = next_x_vals;
           msgJson["next_y"] = next_y_vals;
@@ -172,13 +179,7 @@ int main() {
           // Latency
           // The purpose is to mimic real driving conditions where
           // the car does actuate the commands instantly.
-          //
-          // Feel free to play around with this value but should be to drive
-          // around the track with 100ms latency.
-          //
-          // TODO NOTE: REMEMBER TO SET THIS TO 100 MILLISECONDS BEFORE
-          // SUBMITTING.
-          this_thread::sleep_for(chrono::milliseconds(100));
+          this_thread::sleep_for(chrono::milliseconds(int(1000*latency)));
           ws.send(msg.data(), msg.length(), uWS::OpCode::TEXT);
         }
       } else {

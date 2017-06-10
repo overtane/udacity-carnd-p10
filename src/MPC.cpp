@@ -31,8 +31,8 @@ const int a_start     = 7 * N - 1;
 const double Lf = 2.67;
 
 // Both the reference cross track and orientation errors are 0.
-// // The reference velocity is set to 40 mph.
-double ref_v = 100;
+// The reference velocity is set to 60 mph.
+double ref_v = 60;
 
 class FG_eval {
  public:
@@ -49,17 +49,18 @@ class FG_eval {
     // Any additions to the cost should be added to `fg[0]`.
     fg[0] = 0;
 
+
     // The part of the cost based on the reference state.
     for (int t = 0; t < N; t++) {
       fg[0] += 1   * CppAD::pow(vars[cte_start + t], 2);
       fg[0] += 1   * CppAD::pow(vars[epsi_start + t], 2);
-      fg[0] += 0.1 * CppAD::pow(vars[v_start + t] - ref_v, 2);
+      fg[0] += 1   * CppAD::pow(vars[v_start + t] - ref_v, 2);
     }
 
     // Cost terms controlling magnitude of the actuators
     for (int t = 0; t < N - 1; t++) {
-      fg[0] += 500 * CppAD::pow(vars[delta_start + t], 2);
-      fg[0] += 3   * CppAD::pow(vars[a_start + t], 2); // NOTE: multiplier here cuts down the max speed
+      fg[0] += 500 * CppAD::pow(vars[delta_start + t], 2); // multiplier here dampens steering actions
+      fg[0] += 1   * CppAD::pow(vars[a_start + t], 2);     // multiplier here cuts down the max speed
     }
 
     // These control the magnitude of the change of the actuators
