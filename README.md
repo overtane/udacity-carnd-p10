@@ -2,7 +2,138 @@
 Self-Driving Car Engineer Nanodegree Program
 
 ---
+## The Model
 
+This work contains a model predictive controller for a simulated car on a race track. 
+It uses kinematic vehicle model consisting of state [x, y, psi, v, cte, espi] and
+actuations [delta, a]. These variablse are:
+
+  * x: x position
+  * y: y position
+  * psi: orientation angle
+  * v: velocity
+  * cte: cross track error
+  * epsi: oritentation error
+  * delta: steering angle
+  * a: acceleration (throttle value in this model)
+
+Given a reference trajectory (for example a center line of the lane to follow) and current 
+vehicle state, the implementation tries to minimize the errors between vechicles trajectory and
+the reference trajectory within the given prediction horizon.
+
+The solution consist of the main source code modules `main.cpp` and `MPC.cpp`. The former contains 
+communication with the simulator, feeding vehicle's state to the model and passing the calculated
+actuation back to the simulator.
+
+`MPC.cpp` contains the model. It uses [Ipopt non-linear optimization package](https://projects.coin-or.org/Ipopt)
+for solving the optimization task (actuator values). As part of the input, we calculate vehicles predicted 
+state within the horizon for different time steps (`MPC.cpp`):
+
+    fg[1 + x_start + t] = x1 - (x0 + v0 * CppAD::cos(psi0) * dt);
+    fg[1 + y_start + t] = y1 - (y0 + v0 * CppAD::sin(psi0) * dt);
+    fg[1 + psi_start + t] = psi1 - (psi0 + v0 * delta0 / Lf * dt);
+    fg[1 + v_start + t] = v1 - (v0 + a0 * dt);
+    fg[1 + cte_start + t] = cte1 - ((f0 - y0) + (v0 * CppAD::sin(epsi0) * dt));
+    fg[1 + epsi_start + t] = epsi1 - ((psi0 - psides0) + v0 * delta0 / Lf * dt);
+
+Important part of the input to the solver, is the cost values. The cost values present the relative importance
+of different state variables on the optimization problem. In this implementation, cost value are defined like this:
+
+    // The cost is stored is the first element of `fg`.
+    // Any additions to the cost should be added to `fg[0]`.
+    fg[0] = 0;
+
+
+    // The part of the cost based on the reference state.
+    for (int t = 0; t < N; t++) {
+      fg[0] += 1   * CppAD::pow(vars[cte_start + t], 2);
+      fg[0] += 1   * CppAD::pow(vars[epsi_start + t], 2);
+      fg[0] += 1   * CppAD::pow(vars[v_start + t] - ref_v, 2);
+    }
+
+    // Cost terms controlling magnitude of the actuators
+    for (int t = 0; t < N - 1; t++) {
+      fg[0] += 500 * CppAD::pow(vars[delta_start + t], 2); // multiplier here dampens steering actions
+      fg[0] += 1   * CppAD::pow(vars[a_start + t], 2);     // multiplier here cuts down the max speed
+    }
+
+    // These control the magnitude of the change of the actuators
+    // Minimize the value gap between sequential actuations.
+    for (int t = 0; t < N - 2; t++) {
+      fg[0] += 50000 * CppAD::pow(vars[delta_start + t + 1] - vars[delta_start + t], 2);
+      fg[0] += 10000 * CppAD::pow(vars[a_start + t + 1] - vars[a_start + t], 2);
+    }
+
+The relative importance of cross track error and error change has been increased using multipliers. 
+These where found by experimenting. 
+
+
+## Timestep Length and Elapsed Duration (N & dt)
+
+*The prediction horizon* is the duration over which future predictions are made. The length of the 
+horizon is the product of variables N and dt.
+N is the number of timesteps in the horizon. dt is the time between actuations in seconds. 
+
+This solution uses one second horizon, N == 20 and dt == 0.05. This was found suitable for simulation on
+the hardware at hand. Increasing dt to 0.1 did not give accurate enough calculations (difficult to keep
+the vehicle on track). On the other hand, decrasing dt would shorten the length of the horizon. When N was
+increased over 20, calculation introduced too much overhead.
+
+## Polynomial Fitting and MPC Preprocessing
+
+The simulator gives a set of waypoints to controlller. These waypoints represent the 
+reference trajectory the vehicle to follow. Typically, in a autonomous vehicle, the path planning
+module produces the waypoints.
+
+The waypoints are presented in a global (map's) coordinate system and must be converted to vehicle's
+cordinate system. Vehicle is always at the origin (0,0) of its own coordinate system. If the point (`px`,`py`) is 
+vehicle's location in map coordinates and vectors `ptsx` and `ptsy` contain the waypoints, coordinate transformation is 
+done in a loop (`main.cpp`): 
+
+    for (int i=0; i< ptsx.size(); i++) {
+      xvals(i) =  (ptsx[i] - px) * cos(-psi) - (ptsy[i] - py) * sin(-psi);
+      yvals(i) =  (ptsx[i] - px) * sin(-psi) + (ptsy[i] - py) * cos(-psi);
+    }
+
+After the transformation, we can fit the waypoints into a polynomial repesenting the reference trajectory.
+Third order polynomials are usually adequate for this purpose. (`main.cpp`)
+
+    Eigen::VectorXd coeffs = polyfit(xvals, yvals, 3);
+         
+Once we have the reference trajectory, we can calculate cross track error (CTE) and orientation error (EPSI). 
+Current CTE is the difference between the current location and the reference trajectory. In vechile's coordinate 
+system this is simply:
+ 
+    double cte = polyeval(coeffs, 0);
+
+Orientation error is the the angle between the tangent line of the reference trajectory and vehicle's orientation.
+Vehicle always points to x-axis direction (`psi==0`), so we get the error from the derivative of trajectory at zero. 
+('handness' of map and vehicle coordinate systems are different, thus the minus):
+
+    double epsi = -atan(coeffs[1]);
+
+But in reality, we need to take into account the latency of actuation in the error calculations. This is explained next.
+
+
+## Model Predictive Control with Latency
+
+In real life, there is always a delay between control calculation and control actuation. This is called latency.
+The latency can be handled by feeding into solver a predicted vehicle state. We predict the state of the vehicle after
+the expected latency using to the vehicle model. (Steering angle is normalized to range [-1,1] and it is converter to radians.)
+(`main,cpp`)
+
+    double latency = 0.1; // 100 ms
+    double x_pred = v * latency;
+    double y_pred = 0.0;
+    double psi_pred = -v * steer_angle * deg2rad(25) * latency / 2.67;
+
+Cross track and orientation errors are then calculated at this predicted state. (`main.cpp`)
+
+    double cte_pred = polyeval(coeffs, x_pred);
+    double epsi_pred = atan(coeffs[1] + 2*coeffs[2]*x_pred);
+
+
+---
 ## Dependencies
 
 * cmake >= 3.5
@@ -50,66 +181,3 @@ Self-Driving Car Engineer Nanodegree Program
 3. Compile: `cmake .. && make`
 4. Run it: `./mpc`.
 
-## Tips
-
-1. It's recommended to test the MPC on basic examples to see if your implementation behaves as desired. One possible example
-is the vehicle starting offset of a straight line (reference). If the MPC implementation is correct, after some number of timesteps
-(not too many) it should find and track the reference line.
-2. The `lake_track_waypoints.csv` file has the waypoints of the lake track. You could use this to fit polynomials and points and see of how well your model tracks curve. NOTE: This file might be not completely in sync with the simulator so your solution should NOT depend on it.
-3. For visualization this C++ [matplotlib wrapper](https://github.com/lava/matplotlib-cpp) could be helpful.
-
-## Editor Settings
-
-We've purposefully kept editor configuration files out of this repo in order to
-keep it as simple and environment agnostic as possible. However, we recommend
-using the following settings:
-
-* indent using spaces
-* set tab width to 2 spaces (keeps the matrices in source code aligned)
-
-## Code Style
-
-Please (do your best to) stick to [Google's C++ style guide](https://google.github.io/styleguide/cppguide.html).
-
-## Project Instructions and Rubric
-
-Note: regardless of the changes you make, your project must be buildable using
-cmake and make!
-
-More information is only accessible by people who are already enrolled in Term 2
-of CarND. If you are enrolled, see [the project page](https://classroom.udacity.com/nanodegrees/nd013/parts/40f38239-66b6-46ec-ae68-03afd8a601c8/modules/f1820894-8322-4bb3-81aa-b26b3c6dcbaf/lessons/b1ff3be0-c904-438e-aad3-2b5379f0e0c3/concepts/1a2255a0-e23c-44cf-8d41-39b8a3c8264a)
-for instructions and the project rubric.
-
-## Hints!
-
-* You don't have to follow this directory structure, but if you do, your work
-  will span all of the .cpp files here. Keep an eye out for TODOs.
-
-## Call for IDE Profiles Pull Requests
-
-Help your fellow students!
-
-We decided to create Makefiles with cmake to keep this project as platform
-agnostic as possible. Similarly, we omitted IDE profiles in order to we ensure
-that students don't feel pressured to use one IDE or another.
-
-However! I'd love to help people get up and running with their IDEs of choice.
-If you've created a profile for an IDE that you think other students would
-appreciate, we'd love to have you add the requisite profile files and
-instructions to ide_profiles/. For example if you wanted to add a VS Code
-profile, you'd add:
-
-* /ide_profiles/vscode/.vscode
-* /ide_profiles/vscode/README.md
-
-The README should explain what the profile does, how to take advantage of it,
-and how to install it.
-
-Frankly, I've never been involved in a project with multiple IDE profiles
-before. I believe the best way to handle this would be to keep them out of the
-repo root to avoid clutter. My expectation is that most profiles will include
-instructions to copy files to a new location to get picked up by the IDE, but
-that's just a guess.
-
-One last note here: regardless of the IDE used, every submitted project must
-still be compilable with cmake and make./
